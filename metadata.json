@@ -1,0 +1,6 @@
+{
+  "name": "Resilio",
+  "description": "Digital Twin-driven framework for infrastructure-less disaster communication, multi-hop D2D mesh routing, and Emergency Decision Support System (EDSS).",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
