@@ -5,6 +5,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
@@ -27,6 +28,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.*
+import com.example.data.maps.GroundedPlace
+import com.example.data.maps.GroundedPlaceType
+import com.example.ui.components.GoogleMapsGroundingHeaderBanner
+import com.example.ui.components.GoogleMapsPlaceDetailModal
 import com.example.ui.components.MetricGaugeCard
 import com.example.ui.components.PriorityBadge
 import com.example.ui.components.StatusBadge
@@ -34,6 +39,12 @@ import com.example.ui.theme.*
 import com.example.ui.viewmodel.MapLayerFilter
 import com.example.ui.viewmodel.ResilioViewModel
 import kotlin.math.hypot
+
+enum class DigitalTwinViewMode {
+    MESH_TOPOLOGY_3D,
+    TERRAIN_3D,
+    ORTHO_MAP_2D
+}
 
 @Composable
 fun DigitalTwinMapScreen(
@@ -51,7 +62,13 @@ fun DigitalTwinMapScreen(
     val mapLayers by viewModel.mapLayers.collectAsState()
     val selectedEntity by viewModel.selectedEntity.collectAsState()
 
-    var is3DMode by remember { mutableStateOf(true) }
+    // Google Maps Grounding State (gemini-3.8-flash)
+    val groundingResult by viewModel.groundedMapsResult.collectAsState()
+    val isGroundingLoading by viewModel.isGroundingLoading.collectAsState()
+    val selectedRegion by viewModel.selectedRegion.collectAsState()
+    var activePlaceModal by remember { mutableStateOf<GroundedPlace?>(null) }
+
+    var viewMode by remember { mutableStateOf(DigitalTwinViewMode.MESH_TOPOLOGY_3D) }
     var showHazardDialog by remember { mutableStateOf(false) }
 
     // Pan and Zoom states for 2.2km coordinate mapping
@@ -71,47 +88,38 @@ fun DigitalTwinMapScreen(
     )
 
     Box(modifier = Modifier.fillMaxSize().background(ResilioNavyDark)) {
-        if (is3DMode) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                DigitalTwin3DScreen(viewModel = viewModel)
-
-                // Floating 2D Switch Button
-                FloatingActionButton(
-                    onClick = { is3DMode = false },
-                    containerColor = ResilioNavySurface,
-                    contentColor = ResilioCyanPrimary,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 16.dp)
-                        .height(38.dp)
-                        .border(1.dp, ResilioCyanPrimary, RoundedCornerShape(12.dp))
-                        .testTag("switch_to_2d_btn")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Map, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Switch to 2D Ortho Map", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
+        when (viewMode) {
+            DigitalTwinViewMode.MESH_TOPOLOGY_3D -> {
+                MeshTopology3DScreen(viewModel = viewModel)
             }
-        } else {
-            Column(modifier = Modifier.fillMaxSize()) {
-                // Layer filters and status bar with 3D switch
-                MapControlsHeader(
-                    is3DMode = is3DMode,
-                    onToggle3D = { is3DMode = true },
-                    mapLayers = mapLayers,
-                    onToggleLayer = { viewModel.toggleLayer(it) },
-                    onResetView = {
-                        scale = 1f
-                        offset = Offset.Zero
-                    },
-                    onAddHazard = { showHazardDialog = true }
-                )
+            DigitalTwinViewMode.TERRAIN_3D -> {
+                DigitalTwin3DScreen(viewModel = viewModel)
+            }
+            DigitalTwinViewMode.ORTHO_MAP_2D -> {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    MapControlsHeader(
+                        currentMode = viewMode,
+                        onSelectMode = { viewMode = it },
+                        mapLayers = mapLayers,
+                        onToggleLayer = { viewModel.toggleLayer(it) },
+                        onResetView = {
+                            scale = 1f
+                            offset = Offset.Zero
+                        },
+                        onAddHazard = { showHazardDialog = true }
+                    )
+
+                    // Real-Time Google Maps Grounding Header Banner
+                    GoogleMapsGroundingHeaderBanner(
+                        groundingResult = groundingResult,
+                        isLoading = isGroundingLoading,
+                        selectedRegion = selectedRegion,
+                        presetRegions = viewModel.presetRegions,
+                        onSelectRegion = { viewModel.triggerMapsGrounding(it) },
+                        onTriggerSync = { viewModel.triggerMapsGrounding(it) },
+                        onViewPlaceDetails = { activePlaceModal = it },
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
 
             // Main Digital Twin Canvas
             Box(
@@ -130,11 +138,22 @@ fun DigitalTwinMapScreen(
                             )
                         }
                     }
-                    .pointerInput(gateways, hazards, shelters, reports) {
+                    .pointerInput(gateways, hazards, shelters, reports, groundingResult) {
                         detectTapGestures { tapOffset ->
-                            // Find nearest object
-                            // Canvas transforms: coordinate (x, y) in meters [0, 2200] maps to canvas pixel
-                            // For simplicity, selection can check nearby entities
+                            groundingResult?.places?.forEach { gp ->
+                                val canvasWidth = size.width
+                                val canvasHeight = size.height
+                                val minDim = minOf(canvasWidth, canvasHeight)
+                                val base = (gp.digitalTwinX / 2200f) * minDim + (canvasWidth - minDim) / 2f
+                                val px = (base - canvasWidth / 2f) * scale + canvasWidth / 2f + offset.x
+                                val baseY = (gp.digitalTwinY / 2200f) * minDim + (canvasHeight - minDim) / 2f
+                                val py = (baseY - canvasHeight / 2f) * scale + canvasHeight / 2f + offset.y
+
+                                if (hypot(px - tapOffset.x, py - tapOffset.y) < 36f * scale) {
+                                    activePlaceModal = gp
+                                    return@detectTapGestures
+                                }
+                            }
                         }
                     }
             ) {
@@ -345,6 +364,38 @@ fun DigitalTwinMapScreen(
                         }
                     }
 
+                    // 6b. Draw Grounded Google Maps Places (with Google Pin Badges & Halos)
+                    groundingResult?.places?.forEach { gp ->
+                        val gx = toCanvasX(gp.digitalTwinX)
+                        val gy = toCanvasY(gp.digitalTwinY)
+
+                        val pinColor = when (gp.type) {
+                            GroundedPlaceType.EMERGENCY_HOSPITAL, GroundedPlaceType.TRAUMA_CENTER -> Color(0xFFEA4335)
+                            GroundedPlaceType.RELIEF_SHELTER, GroundedPlaceType.COMMUNITY_HALL -> Color(0xFF34A853)
+                            GroundedPlaceType.CRITICAL_BRIDGE -> Color(0xFFFBBC04)
+                            GroundedPlaceType.POLICE_STATION -> Color(0xFF4285F4)
+                        }
+
+                        // Google Maps Grounded Radar Halo
+                        drawCircle(
+                            color = pinColor.copy(alpha = 0.22f),
+                            radius = 16f * scale,
+                            center = Offset(gx, gy)
+                        )
+                        // Google Pin Base Ring
+                        drawCircle(
+                            color = pinColor,
+                            radius = 7.5f * scale,
+                            center = Offset(gx, gy)
+                        )
+                        // Inner White Core
+                        drawCircle(
+                            color = Color.White,
+                            radius = 3.2f * scale,
+                            center = Offset(gx, gy)
+                        )
+                    }
+
                     // 7. Draw Rescue Resources & Heading
                     if (mapLayers.showRescueUnits) {
                         resources.forEach { res ->
@@ -430,6 +481,69 @@ fun DigitalTwinMapScreen(
     }
 }
 
+        // Floating Google Maps Grounding HUD Pill (Visible in 3D modes)
+        if (viewMode != DigitalTwinViewMode.ORTHO_MAP_2D) {
+            Surface(
+                color = ResilioNavySurface.copy(alpha = 0.94f),
+                shape = RoundedCornerShape(20.dp),
+                border = androidx.compose.foundation.BorderStroke(1.2.dp, Color(0xFF4285F4)),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 10.dp)
+                    .clickable {
+                        viewModel.triggerMapsGrounding(selectedRegion)
+                    }
+                    .testTag("floating_maps_grounding_pill")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (isGroundingLoading) Color(0xFFFBBC04) else Color(0xFF34A853))
+                    )
+                    Icon(
+                        imageVector = Icons.Default.Place,
+                        contentDescription = "Google Maps",
+                        tint = Color(0xFFEA4335),
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Text(
+                        text = if (isGroundingLoading) "Grounding with Google Maps..." else "Google Maps: ${selectedRegion.name.substringBefore(" (")}",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Surface(
+                        color = Color(0xFF4285F4).copy(alpha = 0.25f),
+                        shape = RoundedCornerShape(4.dp)
+                    ) {
+                        Text(
+                            text = "gemini-3.8-flash",
+                            color = Color(0xFF8AB4F8),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Floating 3-Mode View Switcher Pill at bottom center
+        FloatingTwinModeSwitcher(
+            viewMode = viewMode,
+            onSelectMode = { viewMode = it },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 12.dp)
+        )
+    }
+
     if (showHazardDialog) {
         AddHazardDialog(
             onDismiss = { showHazardDialog = false },
@@ -439,12 +553,81 @@ fun DigitalTwinMapScreen(
             }
         )
     }
+
+    // Google Maps Place Detail Modal
+    if (activePlaceModal != null) {
+        GoogleMapsPlaceDetailModal(
+            place = activePlaceModal!!,
+            onDismiss = { activePlaceModal = null }
+        )
+    }
+}
+
+@Composable
+private fun FloatingTwinModeSwitcher(
+    viewMode: DigitalTwinViewMode,
+    onSelectMode: (DigitalTwinViewMode) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = ResilioNavySurface.copy(alpha = 0.94f),
+        shape = RoundedCornerShape(24.dp),
+        tonalElevation = 8.dp,
+        modifier = modifier.border(1.2.dp, ResilioCyanPrimary, RoundedCornerShape(24.dp))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            ModePill(
+                label = "3D Topology",
+                icon = Icons.Default.Hub,
+                isSelected = viewMode == DigitalTwinViewMode.MESH_TOPOLOGY_3D,
+                onClick = { onSelectMode(DigitalTwinViewMode.MESH_TOPOLOGY_3D) }
+            )
+            ModePill(
+                label = "3D Terrain",
+                icon = Icons.Default.ViewInAr,
+                isSelected = viewMode == DigitalTwinViewMode.TERRAIN_3D,
+                onClick = { onSelectMode(DigitalTwinViewMode.TERRAIN_3D) }
+            )
+            ModePill(
+                label = "2D Map",
+                icon = Icons.Default.Map,
+                isSelected = viewMode == DigitalTwinViewMode.ORTHO_MAP_2D,
+                onClick = { onSelectMode(DigitalTwinViewMode.ORTHO_MAP_2D) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ModePill(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = if (isSelected) ResilioCyanPrimary else Color.Transparent,
+            contentColor = if (isSelected) Color.Black else ResilioTextSecondary
+        ),
+        shape = RoundedCornerShape(18.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+        modifier = Modifier.height(32.dp)
+    ) {
+        Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(text = label, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal)
+    }
 }
 
 @Composable
 private fun MapControlsHeader(
-    is3DMode: Boolean,
-    onToggle3D: () -> Unit,
+    currentMode: DigitalTwinViewMode,
+    onSelectMode: (DigitalTwinViewMode) -> Unit,
     mapLayers: MapLayerFilter,
     onToggleLayer: ((MapLayerFilter) -> MapLayerFilter) -> Unit,
     onResetView: () -> Unit,
@@ -464,15 +647,15 @@ private fun MapControlsHeader(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Button(
-                    onClick = onToggle3D,
+                    onClick = { onSelectMode(DigitalTwinViewMode.MESH_TOPOLOGY_3D) },
                     colors = ButtonDefaults.buttonColors(containerColor = ResilioCyanPrimary),
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.height(32.dp).testTag("btn_toggle_3d_engine")
                 ) {
-                    Icon(Icons.Default.ViewInAr, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.Hub, contentDescription = null, tint = Color.Black, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("3D Engine", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text("3D Topology", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
 
                 FilterChip(

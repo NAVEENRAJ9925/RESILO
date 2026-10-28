@@ -82,4 +82,35 @@ class ExampleRobolectricTest {
     assertEquals(10, telem!!.batteryPercent)
     assertTrue(telem.isSubmergedOrHazard)
   }
+
+  @Test
+  fun `verify Google Maps Grounding loads real-world facilities and transforms coordinates`() {
+    val repository = ResilioRepository()
+
+    val grounding = repository.groundedMapsResult.value
+    assertNotNull(grounding)
+    assertTrue(grounding!!.places.isNotEmpty())
+
+    // Verified facilities include hospital and shelters
+    val hasHospital = grounding.places.any { 
+      it.type == com.example.data.maps.GroundedPlaceType.EMERGENCY_HOSPITAL || 
+      it.type == com.example.data.maps.GroundedPlaceType.TRAUMA_CENTER 
+    }
+    assertTrue(hasHospital)
+
+    // Digital twin coordinate transform sanity check (center should be 1100m, 1100m)
+    val coords = repository.mapsGroundingService.toDigitalTwinMeters(
+      lat = 10.9974,
+      lng = 76.9589,
+      centerLat = 10.9974,
+      centerLng = 76.9589
+    )
+    assertEquals(1100f, coords.first, 1.0f)
+    assertEquals(1100f, coords.second, 1.0f)
+
+    // Verify places have Google Maps URIs
+    val samplePlace = grounding.places.first()
+    assertTrue(samplePlace.mapsUri.startsWith("https://maps.google.com/"))
+  }
 }
+

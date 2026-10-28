@@ -37,6 +37,7 @@ fun EDSSDecisionScreen(
     val resources by viewModel.resources.collectAsState()
     val shelters by viewModel.shelters.collectAsState()
     val isResilio by viewModel.isResilioMode.collectAsState()
+    val groundedMapsResult by viewModel.groundedMapsResult.collectAsState()
 
     val activePath by viewModel.activePrioritizedPath.collectAsState()
     val selectedPolicy by viewModel.selectedRoutingPolicy.collectAsState()
@@ -56,6 +57,66 @@ fun EDSSDecisionScreen(
                 isResilio = isResilio,
                 onBroadcastClick = { showBroadcastDialog = true }
             )
+        }
+
+        // Google Maps Grounding EDSS Facility Sync Strip
+        item {
+            Surface(
+                color = ResilioNavyCard,
+                shape = RoundedCornerShape(10.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4285F4).copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(24.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFEA4335)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Place,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "Google Maps Real-Time Grounding",
+                                color = ResilioTextPrimary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Surface(
+                                color = Color(0xFF4285F4).copy(alpha = 0.2f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "gemini-3.8-flash",
+                                    color = Color(0xFF8AB4F8),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "EDSS routes and citizen triage instructions are dynamically grounded with real-world Google Maps facilities (${groundedMapsResult?.places?.size ?: 0} facilities verified).",
+                            color = ResilioTextSecondary,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                }
+            }
         }
 
         // 5-Stage EDSS Pipeline Workflow Visualizer (Fig. 3)

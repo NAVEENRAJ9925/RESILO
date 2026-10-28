@@ -24,6 +24,7 @@ val ResilioSuccessGreenDim = Color(0x3300E676)
 val ResilioTextPrimary = Color(0xFFF1F5F9)
 val ResilioTextSecondary = Color(0xFF94A3B8)
 val ResilioTextMuted = Color(0xFF64748B)
+val ResilioTextTertiary = Color(0xFF64748B)
 
 val ResilioMeshBlue = Color(0xFF38BDF8)
 val ResilioGatewayPurple = Color(0xFFA855F7)

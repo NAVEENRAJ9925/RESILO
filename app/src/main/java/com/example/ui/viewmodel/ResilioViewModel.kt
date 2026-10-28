@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.model.*
 import com.example.data.edss.*
+import com.example.data.maps.*
 import com.example.data.repository.ResilioRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -11,6 +12,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+
+data class DisasterRegion(
+    val id: String,
+    val name: String,
+    val regionLabel: String,
+    val latitude: Double,
+    val longitude: Double
+)
 
 enum class AppScreen(val title: String, val icon: String) {
     DIGITAL_TWIN("Digital Twin", "Map"),
@@ -53,6 +62,46 @@ class ResilioViewModel(
     val edssDecisions: StateFlow<List<EDSSDecision>> = repository.edssDecisions
     val citizenInstructions: StateFlow<List<CitizenInstruction>> = repository.citizenInstructions
     val simulationMetrics: StateFlow<SimulationMetrics> = repository.simulationMetrics
+
+    // Google Maps Real-Time Grounding State (gemini-3.8-flash with googleMaps tool)
+    val groundedMapsResult: StateFlow<MapsGroundingResult?> = repository.groundedMapsResult
+    val isGroundingLoading: StateFlow<Boolean> = repository.isGroundingLoading
+    val selectedGroundedPlace: StateFlow<GroundedPlace?> = repository.selectedGroundedPlace
+
+    // Preset Disaster Regions for quick live grounding in Tamil Nadu and India
+    val presetRegions = listOf(
+        DisasterRegion(
+            id = "cbe",
+            name = "Coimbatore Basin (Tamil Nadu)",
+            regionLabel = "Noyyal River Corridor • 10.9974°N, 76.9589°E",
+            latitude = 10.9974,
+            longitude = 76.9589
+        ),
+        DisasterRegion(
+            id = "chn",
+            name = "Chennai Adyar Basin (Tamil Nadu)",
+            regionLabel = "Coastal Flood Plain • 13.0827°N, 80.2707°E",
+            latitude = 13.0827,
+            longitude = 80.2707
+        ),
+        DisasterRegion(
+            id = "wyn",
+            name = "Wayanad Valley (Kerala)",
+            regionLabel = "High-Elevation Landslide Zone • 11.6854°N, 76.1320°E",
+            latitude = 11.6854,
+            longitude = 76.1320
+        ),
+        DisasterRegion(
+            id = "mum",
+            name = "Mumbai Mithi River (Maharashtra)",
+            regionLabel = "Urban Inundation Zone • 19.0760°N, 72.8777°E",
+            latitude = 19.0760,
+            longitude = 72.8777
+        )
+    )
+
+    private val _selectedRegion = MutableStateFlow(presetRegions[0])
+    val selectedRegion: StateFlow<DisasterRegion> = _selectedRegion.asStateFlow()
 
     // EDSS Telemetric Mesh Routing State
     val nodeTelemetryMap: StateFlow<Map<String, NodeTelemetry>> = repository.nodeTelemetryMap
@@ -113,5 +162,19 @@ class ResilioViewModel(
 
     fun forceTriage(report: EmergencyReport) {
         repository.processEDSSForReport(report)
+    }
+
+    fun triggerMapsGrounding(region: DisasterRegion? = null) {
+        val targetRegion = region ?: _selectedRegion.value
+        _selectedRegion.value = targetRegion
+        repository.syncGoogleMapsGrounding(
+            areaName = targetRegion.name,
+            centerLat = targetRegion.latitude,
+            centerLng = targetRegion.longitude
+        )
+    }
+
+    fun selectGroundedPlace(place: GroundedPlace?) {
+        repository.selectGroundedPlace(place)
     }
 }
